@@ -1,0 +1,35 @@
+# CAMA Credentials - NEVER commit these!
+cama_credentials.txt
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Excel/Data files (optional - uncomment if you don't want to commit data)
+# *.xlsx
+# *.xls
+# *.csv
+
+# Output files
+discrepancies_*.xlsx
+*_output.xlsx
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Virtual Environment
+venv/
+env/
+ENV/

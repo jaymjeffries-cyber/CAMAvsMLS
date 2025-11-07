@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 import re
+import os
 
 # Install required package if not available
 try:
@@ -14,6 +15,13 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", "openpyxl"])
     import openpyxl
     from openpyxl import load_workbook
+
+# Try to import windowId extractor
+try:
+    from cama_windowid_extractor import get_window_id
+    EXTRACTOR_AVAILABLE = True
+except ImportError:
+    EXTRACTOR_AVAILABLE = False
 
 # Set page configuration
 st.set_page_config(
@@ -47,12 +55,65 @@ st.sidebar.subheader("⚖️ Comparison Settings")
 numeric_tolerance = st.sidebar.number_input("Numeric Tolerance", value=0.01, format="%.4f")
 skip_zero_values = st.sidebar.checkbox("Skip Zero Values", value=True)
 
-# URL templates
+# URL templates and WindowId
 st.sidebar.subheader("🔗 Hyperlink Settings")
-parcel_url_template = st.sidebar.text_input(
-    "Parcel ID URL Template",
-    "https://iasworld.starkcountyohio.gov/iasworld/Maintain/Transact.aspx?txtMaskedPin={parcel_id}&selYear=&userYear=&selJur=&chkShowHistory=False&chkShowChanges=&chkShowDeactivated=&PinValue={parcel_id}&pin=&trans_key=&windowId=638981100301239623&submitFlag=true&TransPopUp=&ACflag=False&ACflag2=False"
-)
+
+# Auto-extraction feature
+if EXTRACTOR_AVAILABLE:
+    use_auto_extract = st.sidebar.checkbox("🤖 Auto-extract WindowId", value=True, 
+                                           help="Automatically get fresh windowId from CAMA system")
+    
+    if use_auto_extract:
+        with st.sidebar.expander("🔐 CAMA Credentials (Optional)"):
+            st.info("Credentials improve extraction success rate. Leave blank to try without login.")
+            cama_username = st.text_input("Username", type="default", key="cama_user")
+            cama_password = st.text_input("Password", type="password", key="cama_pass")
+            
+            if st.button("🔍 Extract WindowId Now"):
+                with st.spinner("Extracting windowId from CAMA..."):
+                    extracted_id = get_window_id(
+                        username=cama_username if cama_username else None,
+                        password=cama_password if cama_password else None,
+                        fallback_id="638981240146803746"
+                    )
+                    if extracted_id:
+                        st.session_state.extracted_window_id = extracted_id
+                        st.success(f"✅ Extracted: {extracted_id}")
+                    else:
+                        st.error("❌ Extraction failed")
+        
+        # Use extracted or fallback
+        if 'extracted_window_id' in st.session_state:
+            window_id = st.session_state.extracted_window_id
+            st.sidebar.success(f"✅ Using: {window_id}")
+        else:
+            window_id = "638981240146803746"
+            st.sidebar.info(f"ℹ️  Using fallback: {window_id}")
+    else:
+        # Manual entry
+        st.sidebar.info("💡 Get windowId from CAMA website URL")
+        window_id = st.sidebar.text_input(
+            "🔑 WindowId",
+            "638981240146803746",
+            help="Get this from the CAMA website URL"
+        )
+else:
+    # No extractor available - manual only
+    st.sidebar.info("""
+    💡 **How to update WindowId:**
+    1. Go to the CAMA website
+    2. Search for any property
+    3. Copy the windowId from the URL
+    4. Paste it below
+    """)
+    window_id = st.sidebar.text_input(
+        "🔑 WindowId (from CAMA system)",
+        "638981240146803746",
+        help="Get this from the CAMA website URL"
+    )
+
+# Build the URL template with the user's windowId
+parcel_url_template = f"https://iasworld.starkcountyohio.gov/iasworld/Maintain/Transact.aspx?txtMaskedPin={{parcel_id}}&selYear=&userYear=&selJur=&chkShowHistory=False&chkShowChanges=&chkShowDeactivated=&PinValue={{parcel_id}}&pin=&trans_key=&windowId={window_id}&submitFlag=true&TransPopUp=&ACflag=False&ACflag2=False"
 
 # Column comparisons to perform
 COLUMNS_TO_COMPARE = [
