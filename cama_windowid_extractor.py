@@ -68,8 +68,8 @@ def extract_window_id_with_login(username, password, parcel_id="204522"):
         session = requests.Session()
         base_url = "https://iasworld.starkcountyohio.gov/iasworld/"
         
-        # Get the login page
-        login_url = f"{base_url}Login.aspx"
+        # Get the login page - CORRECT URL WITH /Main/
+        login_url = f"{base_url}Main/Login.aspx"
         response = session.get(login_url)
         
         if response.status_code != 200:
@@ -80,21 +80,55 @@ def extract_window_id_with_login(username, password, parcel_id="204522"):
         soup = BeautifulSoup(response.content, 'html.parser')
         
         # Build login payload - adjust these field names based on actual form
-        login_data = {
-            'username': username,
-            'password': password,
-        }
+        login_data = {}
         
         # Add any hidden form fields (like __VIEWSTATE, __EVENTVALIDATION for ASP.NET)
         for hidden in soup.find_all('input', type='hidden'):
             if hidden.get('name') and hidden.get('value'):
                 login_data[hidden['name']] = hidden['value']
         
-        # Submit login
-        response = session.post(login_url, data=login_data)
+        # Add username and password
+        # Try to find the actual field names from the form
+        username_field = None
+        password_field = None
         
+        for inp in soup.find_all('input'):
+            inp_name = inp.get('name', '').lower()
+            inp_type = inp.get('type', '').lower()
+            inp_id = inp.get('id', '').lower()
+            
+            if inp_type == 'password' or 'password' in inp_name or 'pass' in inp_name:
+                password_field = inp.get('name')
+            elif inp_type == 'text' and any(term in inp_name or term in inp_id 
+                                           for term in ['user', 'login', 'name']):
+                username_field = inp.get('name')
+        
+        # If we found the fields, use them; otherwise try common names
+        if username_field:
+            login_data[username_field] = username
+            print(f"  Using username field: {username_field}")
+        else:
+            # Try common field names
+            login_data['txtUsername'] = username
+            login_data['username'] = username
+            print(f"  Using default username field names")
+        
+        if password_field:
+            login_data[password_field] = password
+            print(f"  Using password field: {password_field}")
+        else:
+            # Try common field names
+            login_data['txtPassword'] = password
+            login_data['password'] = password
+            print(f"  Using default password field names")
+        
+        # Submit login
+        response = session.post(login_url, data=login_data, allow_redirects=True)
+        
+        # Check if login succeeded - if we're still on login page, it failed
         if 'login' in response.url.lower() or response.status_code != 200:
-            print("❌ Login failed - check credentials")
+            print("❌ Login failed - check credentials or field names")
+            print(f"   Final URL: {response.url}")
             return None
         
         print("✅ Login successful")
@@ -127,7 +161,7 @@ def extract_window_id_with_login(username, password, parcel_id="204522"):
         if not window_id:
             # This URL format might trigger a redirect with windowId
             property_url = f"{base_url}Maintain/Transact.aspx?txtMaskedPin={parcel_id}"
-            response = session.get(property_url)
+            response = session.get(property_url, allow_redirects=True)
             
             # Check the final URL after any redirects
             if 'windowId=' in response.url:
@@ -145,6 +179,8 @@ def extract_window_id_with_login(username, password, parcel_id="204522"):
             
     except Exception as e:
         print(f"❌ Error during login extraction: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
