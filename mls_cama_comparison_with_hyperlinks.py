@@ -2,7 +2,6 @@ from IPython import get_ipython
 from IPython.display import display
 import pandas as pd
 import numpy as np
-import os
 
 # Install required package for Excel hyperlinks if not available
 try:
@@ -13,14 +12,6 @@ except ImportError:
     print("Installing openpyxl for Excel file creation...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", "openpyxl"])
     import openpyxl
-
-# Try to import windowId extractor
-try:
-    from cama_windowid_extractor import get_window_id
-    EXTRACTOR_AVAILABLE = True
-except ImportError:
-    EXTRACTOR_AVAILABLE = False
-    print("ℹ️  WindowId auto-extraction not available (cama_windowid_extractor.py not found)")
 
 # --- Configuration ---
 MLS_DATA_PATH = '/MLS_11-7-25.xlsx'
@@ -62,65 +53,35 @@ NUMERIC_TOLERANCE = 0.01  # Absolute tolerance for numeric comparisons
 SKIP_ZERO_VALUES = True  # Change to False if 0 is a valid value to compare
 
 # ==================================================================================
-# CAMA CREDENTIALS (OPTIONAL - for automatic windowId extraction)
+# HYPERLINK CONFIGURATION - WINDOW ID INPUT
 # ==================================================================================
-# Option 1: Set environment variables (RECOMMENDED for security)
-#   Windows CMD: set CAMA_USERNAME=your_username
-#   Windows PowerShell: $env:CAMA_USERNAME="your_username"
-#   Mac/Linux: export CAMA_USERNAME=your_username
-# 
-# Option 2: Create a file named 'cama_credentials.txt' with format:
-#   username=your_username
-#   password=your_password
-#
-# Option 3: Hardcode below (NOT RECOMMENDED - security risk)
-# ==================================================================================
+print("=" * 80)
+print("MLS vs. CAMA Data Comparison Tool")
+print("=" * 80)
+print()
+print("📌 How to get WindowId:")
+print("   1. Go to https://iasworld.starkcountyohio.gov/iasworld/")
+print("   2. Log in and search for any property")
+print("   3. Look at the URL and copy the windowId value")
+print("   Example: ...windowId=638981240146803746&...")
+print()
 
-CAMA_USERNAME = os.environ.get('CAMA_USERNAME', None)
-CAMA_PASSWORD = os.environ.get('CAMA_PASSWORD', None)
+# Default windowId
+DEFAULT_WINDOW_ID = "638981240146803746"
 
-# Try to load from credentials file if environment variables not set
-if not CAMA_USERNAME or not CAMA_PASSWORD:
-    try:
-        with open('cama_credentials.txt', 'r') as f:
-            for line in f:
-                if line.strip() and '=' in line:
-                    key, value = line.strip().split('=', 1)
-                    if key.lower() == 'username':
-                        CAMA_USERNAME = value
-                    elif key.lower() == 'password':
-                        CAMA_PASSWORD = value
-    except FileNotFoundError:
-        pass  # Credentials file doesn't exist
+# Ask user for windowId
+user_input = input(f"Enter WindowId (or press Enter to use default: {DEFAULT_WINDOW_ID}): ").strip()
 
-# ==================================================================================
-# HYPERLINK CONFIGURATION - Automatic WindowId Extraction
-# ==================================================================================
-# The script will try to automatically get a fresh windowId from CAMA.
-# If that fails, it will use the fallback value below.
-# ==================================================================================
-
-FALLBACK_WINDOW_ID = "638981240146803746"  # Fallback if auto-extraction fails
-
-# Try to extract windowId automatically
-if EXTRACTOR_AVAILABLE:
-    WINDOW_ID = get_window_id(
-        username=CAMA_USERNAME,
-        password=CAMA_PASSWORD,
-        fallback_id=FALLBACK_WINDOW_ID
-    )
+if user_input:
+    WINDOW_ID = user_input
+    print(f"✅ Using your windowId: {WINDOW_ID}")
 else:
-    print(f"ℹ️  Using fallback windowId: {FALLBACK_WINDOW_ID}")
-    WINDOW_ID = FALLBACK_WINDOW_ID
+    WINDOW_ID = DEFAULT_WINDOW_ID
+    print(f"✅ Using default windowId: {WINDOW_ID}")
 
-# If extraction completely failed, use fallback
-if not WINDOW_ID:
-    print(f"⚠️  Using fallback windowId: {FALLBACK_WINDOW_ID}")
-    WINDOW_ID = FALLBACK_WINDOW_ID
+print()
 
 PARCEL_ID_URL_TEMPLATE = f"https://iasworld.starkcountyohio.gov/iasworld/Maintain/Transact.aspx?txtMaskedPin={{parcel_id}}&selYear=&userYear=&selJur=&chkShowHistory=False&chkShowChanges=&chkShowDeactivated=&PinValue={{parcel_id}}&pin=&trans_key=&windowId={WINDOW_ID}&submitFlag=true&TransPopUp=&ACflag=False&ACflag2=False"
-
-print(f"🔗 Using windowId: {WINDOW_ID}")
 
 # Zillow URL - will use search format since we don't have zpid
 ZILLOW_URL_BASE = "https://www.zillow.com/homes/"
