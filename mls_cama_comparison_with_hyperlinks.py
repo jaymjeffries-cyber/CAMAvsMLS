@@ -2,6 +2,7 @@ from IPython import get_ipython
 from IPython.display import display
 import pandas as pd
 import numpy as np
+import os
 
 # Install required package for Excel hyperlinks if not available
 try:
@@ -384,7 +385,8 @@ def compare_data_enhanced(df_mls, df_cama, unique_id_col, cols_to_compare_mappin
                         'Field_CAMA': cama_original_col,
                         'MLS_Value': mls_val,
                         'CAMA_Value': cama_val,
-                        'Difference': calculate_difference(mls_val, cama_val)
+                        'Difference': calculate_difference(mls_val, cama_val),
+                        'Zillow_URL': format_zillow_url(address, city, state, zip_code)
                     })
 
             # Handle sum comparisons (multiple CAMA columns summed)
@@ -468,7 +470,8 @@ def compare_data_enhanced(df_mls, df_cama, unique_id_col, cols_to_compare_mappin
                             'Field_CAMA': f"SUM({', '.join(cama_cols)})",
                             'MLS_Value': mls_val,
                             'CAMA_Value': cama_sum,
-                            'Difference': calculate_difference(mls_val, cama_sum)
+                            'Difference': calculate_difference(mls_val, cama_sum),
+                            'Zillow_URL': format_zillow_url(address, city, state, zip_code)
                         })
 
             # Handle categorical comparisons
@@ -545,7 +548,8 @@ def compare_data_enhanced(df_mls, df_cama, unique_id_col, cols_to_compare_mappin
                             'MLS_Value': mls_val,
                             'CAMA_Value': cama_val,
                             'Expected_CAMA_Value': expected_cama,
-                            'Match_Rule': f"If '{check_text}' in {mls_col}, then {cama_col} should be {mapping.get('cama_expected_if_true')}, else {mapping.get('cama_expected_if_false')}"
+                            'Match_Rule': f"If '{check_text}' in {mls_col}, then {cama_col} should be {mapping.get('cama_expected_if_true')}, else {mapping.get('cama_expected_if_false')}",
+                            'Zillow_URL': format_zillow_url(address, city, state, zip_code)
                         })
 
             # If no mismatches found for this record, it's a perfect match!
@@ -559,7 +563,8 @@ def compare_data_enhanced(df_mls, df_cama, unique_id_col, cols_to_compare_mappin
                     'State': state,
                     'Zip': zip_code,
                     'Fields_Compared': len(fields_compared),
-                    'Fields_List': ', '.join(fields_compared)
+                    'Fields_List': ', '.join(fields_compared),
+                    'Zillow_URL': format_zillow_url(address, city, state, zip_code)
                 })
 
             value_mismatches.extend(record_mismatches)
@@ -850,56 +855,6 @@ if __name__ == "__main__":
     print("Automation Complete")
     print("="*80)
 
-    # Optional: Download Zillow photos
-    print("\n" + "="*80)
-    print("OPTIONAL: Download Zillow Property Photos")
-    print("="*80)
-    print("\nWould you like to download property photos from Zillow?")
-    print("This will:")
-    print("  • Download the main photo for each property")
-    print("  • Save photos to 'zillow_photos/' folder")
-    print("  • Take about 2-3 seconds per property")
-    print()
-    
-    download_photos = input("Download photos? (yes/no, default=no): ").strip().lower()
-    
-    if download_photos in ['yes', 'y']:
-        try:
-            from zillow_photo_downloader import batch_download_photos
-            
-            print("\n" + "="*80)
-            print("Downloading Zillow Photos")
-            print("="*80)
-            
-            # Download photos for value mismatches
-            if not df_value_mismatches.empty:
-                print("\n📸 Downloading photos for VALUE MISMATCHES...")
-                photo_map_mismatches = batch_download_photos(
-                    df_value_mismatches[['Parcel_ID', 'Address', 'City', 'State', 'Zip']].drop_duplicates(),
-                    output_folder='zillow_photos/mismatches',
-                    delay=2
-                )
-            
-            # Download photos for perfect matches
-            if not df_perfect_matches.empty:
-                print("\n📸 Downloading photos for PERFECT MATCHES...")
-                photo_map_perfect = batch_download_photos(
-                    df_perfect_matches[['Parcel_ID', 'Address', 'City', 'State', 'Zip']].drop_duplicates(),
-                    output_folder='zillow_photos/perfect_matches',
-                    delay=2
-                )
-            
-            print("\n✅ Photo download complete!")
-            print("   Check the 'zillow_photos/' folder for downloaded images")
-            
-        except ImportError:
-            print("\n⚠️  Photo downloader module not found (zillow_photo_downloader.py)")
-            print("   Make sure the file is in the same folder as this script")
-        except Exception as e:
-            print(f"\n⚠️  Error downloading photos: {e}")
-    else:
-        print("\n⏭️  Skipping photo download")
-
     print("\n" + "="*80)
     print("Script Complete")
     print("="*80)
@@ -915,6 +870,4 @@ if __name__ == "__main__":
         print("✓ All reports downloaded!")
     except:
         print("\n💡 Files saved locally. Check your folder for the reports.")
-        if download_photos in ['yes', 'y']:
-            print("   Photos saved in: zillow_photos/")
 

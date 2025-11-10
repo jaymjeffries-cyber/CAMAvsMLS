@@ -1,14 +1,15 @@
 """
-Zillow Photo Downloader
-Downloads property photos from Zillow for each address
+Zillow Photo Downloader - Improved Version
+Downloads property photos from Zillow for each address with robust zpid extraction
 """
 
 import requests
 from bs4 import BeautifulSoup
 import re
 import os
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 import time
+import json
 
 def create_photo_folder(output_folder="zillow_photos"):
     """Create folder for storing downloaded photos."""
@@ -16,71 +17,138 @@ def create_photo_folder(output_folder="zillow_photos"):
         os.makedirs(output_folder)
     return output_folder
 
-def format_zillow_search_url(address, city, state, zip_code):
+def extract_zpid_from_direct_url(address, city, state, zip_code):
     """
-    Create a Zillow search URL from address components.
-    Returns: Search URL
+    Build a direct Zillow URL from address and extract zpid from redirect.
+    This is the PRIMARY method - most reliable!
+    
+    URL Template: https://www.zillow.com/homedetails/Address-City-State-Zip/
+    Zillow will redirect to the correct property with zpid
     """
     if not address or not city or not zip_code:
         return None
     
-    # Clean components
+    try:
+        # Clean and format address parts
+        address_clean = str(address).strip()
+        city_clean = str(city).strip()
+        state_clean = str(state).strip() if state else 'OH'
+        zip_clean = str(zip_code).strip().split('-')[0]  # Remove ZIP+4 if present
+        
+        # Format for URL: remove special chars, replace spaces with hyphens
+        address_formatted = re.sub(r'[^\w\s-]', '', address_clean)
+        address_formatted = re.sub(r'\s+', '-', address_formatted)
+        
+        city_formatted = re.sub(r'[^\w\s-]', '', city_clean)
+        city_formatted = re.sub(r'\s+', '-', city_formatted)
+        
+        # Build the direct URL
+        direct_url = f"https://www.zillow.com/homedetails/{address_formatted}-{city_formatted}-{state_clean}-{zip_clean}/"
+        
+        # Headers to mimic a browser
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+        }
+        
+        # Make request - Zillow will redirect to actual property page with zpid
+        response = requests.get(direct_url, headers=headers, timeout=15, allow_redirects=True)
+        
+        if response.status_code == 200:
+            # Check the final URL after redirect
+            final_url = response.url
+            
+            # Extract zpid from URL: .../12345678_zpid/...
+            zpid_match = re.search(r'/(\d{8,})_zpid/', final_url)
+            if zpid_match:
+                return zpid_match.group(1)
+            
+            # Also try to find zpid in page content as backup
+            zpid_patterns = [
+                r'"zpid":"(\d{8,})"',
+                r'"zpid":(\d{8,})',
+                r'data-zpid="(\d{8,})"',
+            ]
+            
+            for pattern in zpid_patterns:
+                match = re.search(pattern, response.text)
+                if match:
+                    return match.group(1)
+        
+    except Exception as e:
+        pass
+    
+    return None
+
+def extract_zpid_robust(address, city, state, zip_code, max_retries=2):
+    """
+    Extract zpid using direct URL method FIRST (most reliable).
+    Falls back to search if direct method fails.
+    """
+    if not address or not city or not zip_code:
+        return None
+    
+    # METHOD 1: Direct URL construction (BEST METHOD)
+    zpid = extract_zpid_from_direct_url(address, city, state, zip_code)
+    if zpid:
+        return zpid
+    
+    # If direct method failed, try search as fallback
+    # Clean inputs
     address_clean = str(address).strip()
     city_clean = str(city).strip()
+    state_clean = str(state).strip() if state else 'OH'
     zip_clean = str(zip_code).strip().split('-')[0]
     
     # Create search query
-    search_query = f"{address_clean}, {city_clean}, OH {zip_clean}"
-    encoded_query = quote(search_query)
-    
-    return f"https://www.zillow.com/homes/{encoded_query}_rb/"
-
-def extract_zpid_from_search(search_url, max_retries=2):
-    """
-    Try to extract zpid from Zillow search results.
-    Returns: zpid string or None
-    """
-    if not search_url:
-        return None
+    search_query = f"{address_clean} {city_clean} {state_clean} {zip_clean}"
     
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
     }
     
     for attempt in range(max_retries):
         try:
-            response = requests.get(search_url, headers=headers, timeout=10)
+            # METHOD 2: Try Zillow's search
+            encoded_query = quote(search_query)
+            search_url = f"https://www.zillow.com/homes/{encoded_query}_rb/"
+            
+            response = requests.get(search_url, headers=headers, timeout=15, allow_redirects=True)
             
             if response.status_code == 200:
-                # Method 1: Look for zpid in the page content
-                zpid_match = re.search(r'"zpid":"(\d+)"', response.text)
-                if zpid_match:
-                    return zpid_match.group(1)
+                content = response.text
                 
-                # Method 2: Look for zpid in data attributes
-                zpid_match = re.search(r'data-zpid="(\d+)"', response.text)
-                if zpid_match:
-                    return zpid_match.group(1)
+                # Try multiple extraction patterns
+                zpid_patterns = [
+                    r'"zpid":"(\d{8,})"',
+                    r'data-zpid="(\d{8,})"',
+                    r'/homedetails/[^/]+/(\d{8,})_zpid/',
+                    r'"propertyId":"(\d{8,})"',
+                    r'(\d{8,})_zpid',
+                ]
                 
-                # Method 3: Look for zpid in links
-                zpid_match = re.search(r'/homedetails/[^/]+/(\d+)_zpid/', response.text)
-                if zpid_match:
-                    return zpid_match.group(1)
-            
+                for pattern in zpid_patterns:
+                    matches = re.findall(pattern, content)
+                    if matches:
+                        return matches[0]
+        
         except Exception as e:
             if attempt < max_retries - 1:
-                time.sleep(1)  # Wait before retry
-            else:
-                print(f"  ⚠️  Could not extract zpid: {str(e)[:50]}")
+                time.sleep(1)
     
     return None
 
 def construct_photo_url(zpid, address, city, state, zip_code):
     """
-    Construct the Zillow photo URL.
+    Construct the Zillow photo URL with mmlb=g,0 parameter.
     Format: https://www.zillow.com/homedetails/ADDRESS/ZPID_zpid/?mmlb=g,0
     """
     if not zpid:
@@ -89,6 +157,7 @@ def construct_photo_url(zpid, address, city, state, zip_code):
     # Format address for URL
     address_clean = str(address).strip()
     city_clean = str(city).strip()
+    state_clean = str(state).strip() if state else 'OH'
     zip_clean = str(zip_code).strip().split('-')[0]
     
     # Remove special characters and replace spaces with hyphens
@@ -99,7 +168,7 @@ def construct_photo_url(zpid, address, city, state, zip_code):
     city_formatted = re.sub(r'\s+', '-', city_formatted)
     
     # Construct URL with photo parameter
-    url_slug = f"{address_formatted}-{city_formatted}-OH-{zip_clean}"
+    url_slug = f"{address_formatted}-{city_formatted}-{state_clean}-{zip_clean}"
     photo_url = f"https://www.zillow.com/homedetails/{url_slug}/{zpid}_zpid/?mmlb=g,0"
     
     return photo_url
@@ -110,59 +179,75 @@ def download_photo_from_url(photo_page_url, parcel_id, output_folder):
     The page with mmlb=g,0 shows the main photo.
     """
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
     
     try:
         # Get the property page with photo view
-        response = requests.get(photo_page_url, headers=headers, timeout=10)
+        response = requests.get(photo_page_url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Look for the main photo - Zillow uses various selectors
+            # Look for the main photo - try multiple methods
             photo_url = None
             
-            # Method 1: Look for photo in picture elements
-            picture = soup.find('picture', class_=re.compile('photo'))
-            if picture:
-                img = picture.find('img')
-                if img and img.get('src'):
-                    photo_url = img['src']
+            # Method 1: Look for high-resolution images in picture elements
+            for picture in soup.find_all('picture'):
+                for img in picture.find_all('img'):
+                    src = img.get('src', '')
+                    if 'photos.zillowstatic.com' in src or 'ssl.cdn-redfin.com' in src:
+                        photo_url = src
+                        break
+                if photo_url:
+                    break
             
-            # Method 2: Look for data-image-url or similar attributes
-            if not photo_url:
-                img = soup.find('img', attrs={'data-image-url': True})
-                if img:
-                    photo_url = img['data-image-url']
-            
-            # Method 3: Look for main listing photo
-            if not photo_url:
-                img = soup.find('img', class_=re.compile('listing-photo'))
-                if img and img.get('src'):
-                    photo_url = img['src']
-            
-            # Method 4: Look for any large image
+            # Method 2: Look for main image with specific classes
             if not photo_url:
                 for img in soup.find_all('img'):
                     src = img.get('src', '')
-                    if 'photos.zillowstatic.com' in src and '1280x960' in src:
+                    alt = img.get('alt', '').lower()
+                    if ('photos.zillowstatic.com' in src or 'ssl.cdn-redfin.com' in src) and ('photo' in alt or 'home' in alt):
                         photo_url = src
                         break
             
+            # Method 3: Look for any large Zillow photo
+            if not photo_url:
+                for img in soup.find_all('img'):
+                    src = img.get('src', '')
+                    if 'photos.zillowstatic.com' in src:
+                        # Prefer larger images
+                        if any(size in src for size in ['1280x960', '1024x768', '800x600']):
+                            photo_url = src
+                            break
+            
+            # Method 4: Extract from JSON data
+            if not photo_url:
+                scripts = soup.find_all('script', type='application/json')
+                for script in scripts:
+                    try:
+                        data = json.loads(script.string)
+                        # Try to find image URLs in the JSON
+                        photo_url = extract_photo_from_json(data)
+                        if photo_url:
+                            break
+                    except:
+                        pass
+            
             # Download the photo
             if photo_url:
-                # Clean the URL (remove query parameters that might cause issues)
+                # Clean the URL
                 photo_url = photo_url.split('?')[0] if '?' in photo_url else photo_url
                 
-                photo_response = requests.get(photo_url, headers=headers, timeout=10)
+                photo_response = requests.get(photo_url, headers=headers, timeout=15)
                 
                 if photo_response.status_code == 200:
-                    # Save photo with parcel ID as filename
+                    # Determine file extension
                     file_extension = '.jpg'
-                    if '.png' in photo_url.lower():
+                    content_type = photo_response.headers.get('content-type', '')
+                    if 'png' in content_type or '.png' in photo_url.lower():
                         file_extension = '.png'
-                    elif '.webp' in photo_url.lower():
+                    elif 'webp' in content_type or '.webp' in photo_url.lower():
                         file_extension = '.webp'
                     
                     filename = f"{parcel_id}{file_extension}"
@@ -176,23 +261,39 @@ def download_photo_from_url(photo_page_url, parcel_id, output_folder):
         return None
         
     except Exception as e:
-        print(f"  ⚠️  Error downloading photo: {str(e)[:50]}")
         return None
+
+def extract_photo_from_json(data, depth=0, max_depth=5):
+    """Recursively search JSON for photo URLs."""
+    if depth > max_depth or not isinstance(data, (dict, list)):
+        return None
+    
+    if isinstance(data, dict):
+        # Look for common photo URL keys
+        for key in ['url', 'src', 'photoUrl', 'imageUrl', 'imgSrc']:
+            if key in data:
+                value = data[key]
+                if isinstance(value, str) and 'photos.zillowstatic.com' in value:
+                    return value
+        
+        # Recursively search nested structures
+        for value in data.values():
+            result = extract_photo_from_json(value, depth + 1, max_depth)
+            if result:
+                return result
+    
+    elif isinstance(data, list):
+        for item in data:
+            result = extract_photo_from_json(item, depth + 1, max_depth)
+            if result:
+                return result
+    
+    return None
 
 def download_property_photo(parcel_id, address, city, state, zip_code, output_folder="zillow_photos"):
     """
     Main function to download a property photo from Zillow.
-    
-    Args:
-        parcel_id: Property parcel ID (for filename)
-        address: Street address
-        city: City name
-        state: State (OH)
-        zip_code: ZIP code
-        output_folder: Folder to save photos
-    
-    Returns:
-        str: Path to downloaded photo, or None if failed
+    Fully automatic - extracts zpid and downloads photo.
     """
     # Create output folder if needed
     create_photo_folder(output_folder)
@@ -205,27 +306,21 @@ def download_property_photo(parcel_id, address, city, state, zip_code, output_fo
     
     print(f"  📸 Downloading photo for parcel {parcel_id}...")
     
-    # Step 1: Create search URL
-    search_url = format_zillow_search_url(address, city, state, zip_code)
-    if not search_url:
-        print(f"  ⚠️  Could not create search URL")
-        return None
-    
-    # Step 2: Extract zpid from search results
-    zpid = extract_zpid_from_search(search_url)
+    # Step 1: Extract zpid from Zillow
+    zpid = extract_zpid_robust(address, city, state, zip_code)
     if not zpid:
         print(f"  ⚠️  Could not find property on Zillow")
         return None
     
     print(f"  ✅ Found zpid: {zpid}")
     
-    # Step 3: Construct photo URL
+    # Step 2: Construct photo URL with mmlb=g,0
     photo_page_url = construct_photo_url(zpid, address, city, state, zip_code)
     if not photo_page_url:
         print(f"  ⚠️  Could not construct photo URL")
         return None
     
-    # Step 4: Download the photo
+    # Step 3: Download the photo
     filepath = download_photo_from_url(photo_page_url, parcel_id, output_folder)
     
     if filepath:
@@ -235,17 +330,10 @@ def download_property_photo(parcel_id, address, city, state, zip_code, output_fo
         print(f"  ⚠️  Could not download photo")
         return None
 
-def batch_download_photos(df, output_folder="zillow_photos", delay=2):
+def batch_download_photos(df, output_folder="zillow_photos", delay=3):
     """
     Download photos for all properties in a DataFrame.
-    
-    Args:
-        df: DataFrame with columns: Parcel_ID, Address, City, State, Zip
-        output_folder: Folder to save photos
-        delay: Seconds to wait between downloads (to be respectful to Zillow)
-    
-    Returns:
-        dict: Mapping of parcel_id to photo filepath
+    Uses direct URL construction for reliable zpid extraction.
     """
     photo_map = {}
     total = len(df)
@@ -253,6 +341,7 @@ def batch_download_photos(df, output_folder="zillow_photos", delay=2):
     print(f"\n📸 Downloading {total} property photos from Zillow...")
     print(f"   Output folder: {output_folder}")
     print(f"   Delay between requests: {delay} seconds")
+    print(f"   Method: Direct URL from address (most reliable)")
     print()
     
     for idx, row in df.iterrows():
@@ -272,12 +361,13 @@ def batch_download_photos(df, output_folder="zillow_photos", delay=2):
             photo_map[parcel_id] = filepath
         
         # Be respectful - wait between requests
-        if idx < total - 1:  # Don't wait after the last one
+        if idx < total - 1:
             time.sleep(delay)
         
         print()
     
     print(f"✅ Downloaded {len(photo_map)} out of {total} photos")
+    print(f"   Success rate: {len(photo_map)/total*100:.1f}%")
     print(f"   Photos saved in: {output_folder}/")
     print()
     
@@ -287,7 +377,7 @@ if __name__ == "__main__":
     # Test the photo downloader
     print("🧪 Testing Zillow Photo Downloader\n")
     
-    # Test with a sample address
+    # Test with your example address
     test_address = "1118 Raff Rd SW"
     test_city = "Canton"
     test_state = "OH"
